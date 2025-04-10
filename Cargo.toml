@@ -10,6 +10,10 @@ license = "MIT"
 name = "log2"
 path = "src/nginx_log.rs"
 
+[[bin]]
+name = "json"
+path = "src/json.rs"
+
 [dependencies]
 anyhow = "1.0.97"
 chrono = { version = "0.4.40", features = ["serde"] }
