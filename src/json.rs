@@ -1,16 +1,15 @@
 use std::collections::HashMap;
-use std::fmt;
 
 use winnow::Parser;
+use winnow::Result;
+use winnow::ascii::digit1;
 use winnow::ascii::multispace0;
-use winnow::ascii::{Caseless, digit1};
 use winnow::combinator::separated;
 use winnow::combinator::separated_pair;
 use winnow::combinator::trace;
 use winnow::combinator::{alt, delimited, opt};
 use winnow::error::{ContextError, ErrMode, ParserError};
-use winnow::stream::FindSlice;
-use winnow::stream::{AsBStr, AsChar, Compare, ParseSlice, Stream, StreamIsPartial};
+use winnow::stream::{AsChar, Stream, StreamIsPartial};
 use winnow::token::take_until;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -49,63 +48,34 @@ fn main() -> anyhow::Result<()> {
 
 fn parse_json(input: &str) -> anyhow::Result<JsonValue> {
     let input = &mut (&*input);
-    parse_value(input)
-        .map_err(|e: ErrMode<ContextError>| anyhow::anyhow!("Failed to parse JSON: {}", e))
+    parse_value(input).map_err(|e: ContextError| anyhow::anyhow!("Failed to parse JSON: {}", e))
 }
 
-fn parse_null<Input, Error>(input: &mut Input) -> Result<(), Error>
-where
-    Input: StreamIsPartial + Stream + Compare<&'static str>,
-    Error: ParserError<Input>,
-{
+fn parse_null(input: &mut &str) -> Result<()> {
     "null".value(()).parse_next(input)
 }
 
-fn parse_bool<Input, Error>(input: &mut Input) -> Result<bool, Error>
-where
-    Input: StreamIsPartial + Stream + Compare<&'static str>,
-    <Input as Stream>::Slice: ParseSlice<bool>,
-    Error: ParserError<Input>,
-{
+fn parse_bool(input: &mut &str) -> Result<bool> {
     alt(("true", "false")).parse_to().parse_next(input)
 }
 
-fn parse_num<Input, Error>(input: &mut Input) -> Result<Num, Error>
-where
-    Input: StreamIsPartial
-        + Stream
-        + Compare<&'static str>
-        + Compare<Caseless<&'static str>>
-        + Compare<char>
-        + AsBStr,
-    <Input as Stream>::Slice: ParseSlice<i64>,
-    <Input as Stream>::Token: AsChar + Clone,
-    <Input as Stream>::IterOffsets: Clone,
-    Error: ParserError<Input>,
-{
+fn parse_num(input: &mut &str) -> Result<Num> {
     let sign = opt("-").map(|s| s.is_some()).parse_next(input)?;
     let num = digit1.parse_to::<i64>().parse_next(input)?;
     let ret: Result<(), ErrMode<ContextError>> = ".".value(()).parse_next(input);
     if ret.is_ok() {
         let frac = digit1.parse_to::<i64>().parse_next(input)?;
         let v = format!("{}.{}", num, frac).parse::<f64>().unwrap();
-        Ok(if sign {
-            Num::Float(-v as _)
-        } else {
-            Num::Float(v as _)
-        })
+        let v = if sign { -v } else { v };
+
+        Ok(Num::Float(v as _))
     } else {
-        Ok(if sign { Num::Int(-num) } else { Num::Int(num) })
+        let v = if sign { -num } else { num };
+        Ok(Num::Int(v))
     }
 }
 
-fn parse_string<Input, Error>(input: &mut Input) -> Result<String, Error>
-where
-    Input: StreamIsPartial + Stream + Compare<char> + FindSlice<char>,
-    <Input as Stream>::Token: AsChar + Clone,
-    <Input as Stream>::Slice: fmt::Display,
-    Error: ParserError<Input>,
-{
+fn parse_string(input: &mut &str) -> Result<String> {
     let ret = delimited('"', take_until(0.., '"'), '"').parse_next(input)?;
     Ok(ret.to_string())
 }
@@ -127,20 +97,7 @@ where
     })
 }
 
-fn parse_array<Input, Error>(input: &mut Input) -> Result<Vec<JsonValue>, Error>
-where
-    Input: StreamIsPartial
-        + Stream
-        + Compare<char>
-        + Compare<&'static str>
-        + Compare<Caseless<&'static str>>
-        + AsBStr
-        + FindSlice<char>,
-    <Input as Stream>::Token: AsChar + Clone,
-    <Input as Stream>::Slice: fmt::Display + ParseSlice<bool> + ParseSlice<i64> + ParseSlice<f64>,
-    <Input as Stream>::IterOffsets: Clone,
-    Error: ParserError<Input>,
-{
+fn parse_array(input: &mut &str) -> Result<Vec<JsonValue>> {
     let left = sep_with_space('[');
     let right = sep_with_space(']');
     let separator = sep_with_space(',');
@@ -148,20 +105,7 @@ where
     delimited(left, parse_values, right).parse_next(input)
 }
 
-fn parse_object<Input, Error>(input: &mut Input) -> Result<HashMap<String, JsonValue>, Error>
-where
-    Input: StreamIsPartial
-        + Stream
-        + Compare<char>
-        + Compare<&'static str>
-        + Compare<Caseless<&'static str>>
-        + AsBStr
-        + FindSlice<char>,
-    <Input as Stream>::Token: AsChar + Clone,
-    <Input as Stream>::Slice: fmt::Display + ParseSlice<bool> + ParseSlice<i64> + ParseSlice<f64>,
-    <Input as Stream>::IterOffsets: Clone,
-    Error: ParserError<Input>,
-{
+fn parse_object(input: &mut &str) -> Result<HashMap<String, JsonValue>> {
     let left = sep_with_space('{');
     let right = sep_with_space('}');
     let pair_separator = sep_with_space(',');
@@ -174,20 +118,7 @@ where
     delimited(left, parse_kv, right).parse_next(input)
 }
 
-fn parse_value<Input, Error>(input: &mut Input) -> Result<JsonValue, Error>
-where
-    Input: StreamIsPartial
-        + Stream
-        + Compare<char>
-        + Compare<&'static str>
-        + Compare<Caseless<&'static str>>
-        + FindSlice<char>,
-    Input: AsBStr,
-    <Input as Stream>::Token: AsChar + Clone,
-    <Input as Stream>::Slice: fmt::Display + ParseSlice<bool> + ParseSlice<i64> + ParseSlice<f64>,
-    <Input as Stream>::IterOffsets: Clone,
-    Error: ParserError<Input>,
-{
+fn parse_value(input: &mut &str) -> Result<JsonValue> {
     alt((
         parse_null.value(JsonValue::Null),
         parse_bool.map(JsonValue::Bool),
