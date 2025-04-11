@@ -13,16 +13,10 @@ use winnow::stream::{AsChar, Stream, StreamIsPartial};
 use winnow::token::take_until;
 
 #[derive(Debug, Clone, PartialEq)]
-enum Num {
-    Int(i64),
-    Float(f64),
-}
-
-#[derive(Debug, Clone, PartialEq)]
 enum JsonValue {
     Null,
     Bool(bool),
-    Number(Num),
+    Number(f64),
     String(String),
     Array(Vec<JsonValue>),
     Object(HashMap<String, JsonValue>),
@@ -59,20 +53,33 @@ fn parse_bool(input: &mut &str) -> Result<bool> {
     alt(("true", "false")).parse_to().parse_next(input)
 }
 
-fn parse_num(input: &mut &str) -> Result<Num> {
+fn parse_num(input: &mut &str) -> Result<f64> {
     let sign = opt("-").map(|s| s.is_some()).parse_next(input)?;
     let num = digit1.parse_to::<i64>().parse_next(input)?;
     let ret: Result<(), ErrMode<ContextError>> = ".".value(()).parse_next(input);
-    if ret.is_ok() {
+    let v = if ret.is_ok() {
         let frac = digit1.parse_to::<i64>().parse_next(input)?;
-        let v = format!("{}.{}", num, frac).parse::<f64>().unwrap();
-        let v = if sign { -v } else { v };
-
-        Ok(Num::Float(v as _))
+        format!("{}.{}", num, frac).parse::<f64>().unwrap()
     } else {
-        let v = if sign { -num } else { num };
-        Ok(Num::Int(v))
+        num as f64
+    };
+
+    let e = opt(alt(("e", "E")))
+        .map(|e| e.is_some())
+        .parse_next(input)?;
+    if !e {
+        let v = if sign { -v } else { v };
+        return Ok(v);
     }
+
+    let e_sign = opt("-").map(|s| s.is_some()).parse_next(input)?;
+    let e_num = digit1.parse_to::<i64>().parse_next(input)?;
+    let e_num = if e_sign { -e_num } else { e_num };
+
+    let v = format!("{}e{}", v, e_num).parse::<f64>().unwrap();
+    let v = if sign { -v } else { v };
+
+    Ok(v as _)
 }
 
 fn parse_string(input: &mut &str) -> Result<String> {
@@ -160,19 +167,27 @@ mod tests {
     fn test_parse_num() -> Result<(), ContextError> {
         let input = "123";
         let result = parse_num(&mut (&*input))?;
-        assert_eq!(result, Num::Int(123));
+        assert_eq!(result, 123.0);
 
         let input = "-123";
         let result = parse_num(&mut (&*input))?;
-        assert_eq!(result, Num::Int(-123));
+        assert_eq!(result, -123.0);
 
         let input = "123.456";
         let result = parse_num(&mut (&*input))?;
-        assert_eq!(result, Num::Float(123.456));
+        assert_eq!(result, 123.456);
 
         let input = "-123.456";
         let result = parse_num(&mut (&*input))?;
-        assert_eq!(result, Num::Float(-123.456));
+        assert_eq!(result, -123.456);
+
+        let input = "-123.456e10";
+        let result = parse_num(&mut (&*input))?;
+        assert_eq!(result, -123.456e10);
+
+        let input = "-123.456e-10";
+        let result = parse_num(&mut (&*input))?;
+        assert_eq!(result, -123.456e-10);
 
         Ok(())
     }
@@ -194,9 +209,9 @@ mod tests {
         assert_eq!(
             result,
             vec![
-                JsonValue::Number(Num::Int(1)),
-                JsonValue::Number(Num::Int(2)),
-                JsonValue::Number(Num::Int(3))
+                JsonValue::Number(1.0),
+                JsonValue::Number(2.0),
+                JsonValue::Number(3.0)
             ]
         );
 
@@ -218,20 +233,20 @@ mod tests {
         let input = r#"{"a": 1, "b": 2}"#;
         let result = parse_object(&mut (&*input))?;
         let mut expected = HashMap::new();
-        expected.insert("a".to_string(), JsonValue::Number(Num::Int(1)));
-        expected.insert("b".to_string(), JsonValue::Number(Num::Int(2)));
+        expected.insert("a".to_string(), JsonValue::Number(1.0));
+        expected.insert("b".to_string(), JsonValue::Number(2.0));
         assert_eq!(result, expected);
 
         let input = r#"{"a": 1, "b": [1, 2, 3]}"#;
         let result = parse_object(&mut (&*input))?;
         let mut expected = HashMap::new();
-        expected.insert("a".to_string(), JsonValue::Number(Num::Int(1)));
+        expected.insert("a".to_string(), JsonValue::Number(1.0));
         expected.insert(
             "b".to_string(),
             JsonValue::Array(vec![
-                JsonValue::Number(Num::Int(1)),
-                JsonValue::Number(Num::Int(2)),
-                JsonValue::Number(Num::Int(3)),
+                JsonValue::Number(1.0),
+                JsonValue::Number(2.0),
+                JsonValue::Number(3.0),
             ]),
         );
         assert_eq!(result, expected);
